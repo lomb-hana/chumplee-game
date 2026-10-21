@@ -111,6 +111,10 @@ func _ready() -> void:
 			s.loop_mode = AudioStreamWAV.LOOP_FORWARD
 			s.loop_end = int(s.get_length() * s.mix_rate)
 		snd[n] = s
+	snd["scratch"] = load("res://audio/scratch.wav")
+	for n in ["music_wgogo", "music_cw", "music_lc"]:
+		var o: AudioStreamOggVorbis = load("res://audio/%s.ogg" % n)
+		o = o.duplicate(); o.loop = n != "music_cw"; snd[n] = o
 	music = AudioStreamPlayer.new(); add_child(music); music.volume_db = -6
 	for i in 8:
 		var p := AudioStreamPlayer.new(); add_child(p); sfx_players.append(p); p.volume_db = -4
@@ -122,8 +126,9 @@ func _ready() -> void:
 		if a == "--auto": mode = "auto"
 		if a.begins_with("--test="): mode = "test_" + a.substr(7)
 	set_state("title")
-	if mode == "cutscene" or mode == "fall": set_state("cut")
-	if mode == "level" or mode == "auto" or mode == "boss": start_game()
+	if mode in ["cutscene", "fall", "concert"]: set_state("cut")
+	if mode in ["level", "auto", "boss", "reunion"]: start_game()
+	if mode == "reunion": god = true; pp.x = ARENA + 60; cam_x = ARENA; start_boss(); boss.st = "orbs"; boss.p.y = GROUND; boss_defeated()
 	if mode.begins_with("test_"): start_test()
 	if mode in ["auto", "boss", "level"] or mode.begins_with("test_"): god = true
 
@@ -139,11 +144,13 @@ func sfx(n: String) -> void:
 func set_state(s: String) -> void:
 	state = s; st = 0.0
 	match s:
-		"title": play_music("music_title")
-		"cut": play_music("music_cutscene"); parts.clear(); cut_flags.clear()
+		"title": play_music("music_wgogo")
+		"cut": music.stream = snd["music_cw"]; music.play(); parts.clear(); cut_flags.clear()
 		"card": music.stop()
 		"play": play_music("music_boss" if boss_active else "music_level")
-		"win": music.stream = snd["jingle_win"]; music.play(); save_hi()
+		"win":
+			if music.stream != snd["music_lc"] or not music.playing: music.stream = snd["jingle_win"]; music.play()
+			save_hi()
 		"cont": music.stream = snd["jingle_over"]; music.play()
 		"over": save_hi()
 
@@ -213,11 +220,16 @@ func _process(delta: float) -> void:
 	if mode.begins_with("test_"): run_test(dt)
 
 func shots() -> void:
-	var targets := {"title": ["title", 2.0], "cutscene": ["cut", 9.6], "fall": ["cut", 16.0], "level": ["play", 2.5], "boss": ["play", 6.0]}
+	var targets := {"title": ["title", 2.0], "concert": ["cut", 33.0], "cutscene": ["cut", CONCERT + 3.6 * SLOW], "fall": ["cut", CONCERT + 10.0 * SLOW], "level": ["play", 2.5], "boss": ["play", 6.0]}
+	if mode == "reunion" and state == "play" and bossdead_t > 22.0 and not cut_flags.has("shot"):
+		cut_flags["shot"] = true
+		await RenderingServer.frame_post_draw
+		get_viewport().get_texture().get_image().save_png("/workspace/chumplee-reunion.png"); print("saved reunion")
+	if mode == "reunion" and state == "win": print("REUNION reached win st=", snapped(Time.get_ticks_msec() / 1000.0, 0.1), " music=", music.stream.resource_path, " playing=", music.playing, " pos=", snapped(music.get_playback_position(), 0.1)); get_tree().quit()
 	if targets.has(mode) and state == targets[mode][0] and st >= targets[mode][1]:
 		if mode == "level" and pp.x < 1000:
 			pp.x = 1180; cam_x = 1100; st = 0.5; return
-		var out: String = {"title": "chumplee-title", "cutscene": "chumplee-cutscene", "fall": "chumplee-fall", "level": "chumplee-level", "boss": "chumplee-boss"}[mode]
+		var out: String = {"title": "chumplee-title", "cutscene": "chumplee-cutscene", "concert": "chumplee-concert", "fall": "chumplee-fall", "level": "chumplee-level", "boss": "chumplee-boss"}[mode]
 		await RenderingServer.frame_post_draw
 		get_viewport().get_texture().get_image().save_png("/workspace/%s.png" % out)
 		print("saved ", out); get_tree().quit()
@@ -428,49 +440,124 @@ func boss_defeated() -> void:
 	bossdead_t = 0.01; ebul.clear(); sfx("explode"); shake = 0.6; flash = 1.0
 	add_score(10000, boss.p + Vector2(0, -30))
 	say("KELDARAH: NOOO! MY SHOULDER PADS!")
+const REUNION := [[5.0, "WHAM!: CHUMPLEE!! YOU SAVED US!!"], [8.5, "CHUMPLEE: GROUP HUG! BRING IT IN, BOYS!"], [12.5, "WHAM!: WE THOUGHT WE'D BE STUCK IN THOSE BALLS FOREVER!"], [16.5, "CHUMPLEE: NOBODY KEL-BALLS MY FAVORITE BAND."], [20.5, "WHAM!: THIS CALLS FOR A VICTORY DANCE!!"], [25.5, "WHAM!: THANK YOU, CHUMPLEE. YOU'RE OUR BIGGEST FAN!"], [29.5, "CHUMPLEE: BIGGEST FAN? BUDDY, I'M EVERYBODY'S BIGGEST FAN. LOOK AT ME."], [33.5, "KELDARAH: ENJOY IT WHILE IT LASTS, CHUMPLEE!! MWAHAHA!"], [37.5, "CHUMPLEE: ...SHE'S GONNA BE A PROBLEM, ISN'T SHE."]]
+const REUNION_END := 41.5
 func update_bossdead(dt: float) -> void:
+	var prev := bossdead_t
 	bossdead_t += dt
+	var t := bossdead_t
 	var b := boss
-	if bossdead_t < 2.0 and randf() < 0.3:
+	if t < 2.0 and randf() < 0.3:
 		sfx("explode"); add_parts(b.p + Vector2(randf_range(-10, 10), randf_range(-24, 0)), 10, [PAL.p, PAL.Y, PAL.c][randi() % 3], 100)
-	if bossdead_t > 2.0 and bossdead_t < 2.1: say("KELDARAH: THIS ISN'T OVER! SEE YOU IN LEVEL 2!")
-	if bossdead_t > 2.6: b.p.y -= 160 * dt; add_parts(b.p + Vector2(0, 2), 1, PAL.w, 30, 0.5, 3)
-	if bossdead_t > 4.5 and bossdead_t < 4.6: sfx("powerup"); add_parts(Vector2(ARENA + W / 2, GROUND - 6), 30, PAL.w, 120)
-	if bossdead_t > 5.0 and taunt.begins_with("KEL"): say("WHAM!: CHUMPLEE! YOU SAVED US!!")
+	if t > 2.0 and prev <= 2.0: say("KELDARAH: THIS ISN'T OVER! SEE YOU IN LEVEL 2!")
+	if t > 2.6 and t < 8.0: b.p.y -= 160 * dt; add_parts(b.p + Vector2(0, 2), 1, PAL.w, 30, 0.5, 3)
+	if t > 4.5 and prev <= 4.5:
+		sfx("powerup"); add_parts(Vector2(ARENA + W / 2, GROUND - 6), 30, PAL.w, 120)
+		music.stream = snd["music_lc"]; music.play()
+	for l in REUNION:
+		if t > l[0] and prev <= l[0]:
+			say(l[1]); taunt_t = 3.8
+	# Chumplee walks over for the group hug
+	var hug_x: float = ARENA + W / 2 - 38
+	if t > 7.0 and t < 21.0:
+		if abs(pp.x - hug_x) > 1: facing = 1 if hug_x > pp.x else -1
+		pp.x = move_toward(pp.x, hug_x, 70 * dt)
+	if t > 9.0 and t < 20.0 and randf() < 0.12: add_parts(Vector2(ARENA + W / 2 + randf_range(-30, 20), GROUND - 40), 1, PAL.p, 20, 1.0, 3)
+	if t > 20.5 and t < 33.0 and randf() < 0.5:
+		parts.append({"p": Vector2(ARENA + randf_range(0, W), -4), "v": Vector2(randf_range(-20, 20), randf_range(40, 90)), "l": 2.5, "c": [PAL.p, PAL.c, PAL.Y, PAL.G][randi() % 4], "s": 2.0})
+	# Keldarah's hairspray-jet flyby tease
+	if t > 33.0 and t < 37.5:
+		b.p = Vector2(ARENA + W + 30 - (t - 33.0) * 110, 80 + sin(t * 3) * 8)
+		add_parts(b.p + Vector2(12, 2), 1, PAL.w, 30, 0.5, 3)
+	if t >= 37.5: b.p.y = -200
 	pp.y = min(pp.y + 300 * dt, GROUND)
 	update_parts(0)
 	taunt_t -= dt
-	if bossdead_t > 8.0:
+	if t > REUNION_END:
 		score += lives * 5000; set_state("win")
 
 # ---------------- cutscene ----------------
-const CUT_END := 23.0
+const CONCERT := 60.0
+const SLOW := 1.35
+const CUT_END := CONCERT + 17.0 * SLOW
+const TYPE_CPS := 16.0
+func cut_t() -> float:
+	return st if st < CONCERT else 6.0 + (st - CONCERT) / SLOW
 var cut_text := ""
 func update_cut(dt: float) -> void:
 	if enter_hit() and st > 0.3: end_cut(); return
-	var t := st
+	var conc := st < CONCERT
+	var t := cut_t()
+	if conc:
+		# light show sparkles + air-guitar sparks
+		if randf() < 0.25: parts.append({"p": Vector2(randf_range(200, 380), 0), "v": Vector2(randf_range(-15, 15), randf_range(30, 70)), "l": 2.0, "c": [PAL.p, PAL.c, PAL.Y, PAL.G][randi() % 4], "s": 1.0})
+		if t > 34.0 and t < 40.0 and randf() < 0.5: add_parts(Vector2(92, 128), 2, PAL.Y, 70, 0.5, 2)
+		if t > 55.0 and randf() < 0.6: parts.append({"p": Vector2(randf_range(0, W), -4), "v": Vector2(randf_range(-20, 20), randf_range(40, 90)), "l": 2.5, "c": [PAL.p, PAL.c, PAL.Y, PAL.G][randi() % 4], "s": 2.0})
+		var cheers := [7.5, 12.0, 18.5, 22.5, 27.5, 33.0, 39.5, 44.0, 49.0, 54.0, 57.5]
+		for c in cheers:
+			if t >= c and not cut_flags.has(c): cut_flags[c] = true; sfx("select")
+		return
 	var ev := [[6.0, "glass"], [9.0, "orb"], [9.8, "orb"], [13.4, "jump"], [14.5, "wind"], [19.4, "crash"]]
 	for e in ev:
 		if t >= e[0] and not cut_flags.has(e[0]):
 			cut_flags[e[0]] = true
 			match e[1]:
-				"glass": sfx("glass"); shake = 0.5; flash = 1.0; music.stop()
+				"glass": music.stop(); sfx("scratch"); sfx("glass"); shake = 0.6; flash = 1.0; parts.clear()
 				"orb": sfx("orb"); flash = 0.5
 				"jump": sfx("jump")
 				"wind": music.stream = snd["wind"]; music.play()
 				"crash": music.stop(); sfx("crash"); shake = 0.9; flash = 1.0; add_parts(Vector2(192, GROUND), 40, Color("#b8a890"), 150, 1.2, 3)
 	if t > 6.0 and t < 6.6 and randf() < 0.9:
 		parts.append({"p": Vector2(randf_range(300, 380), randf_range(20, 140)), "v": Vector2(randf_range(-160, -40), randf_range(-60, 40)), "l": 1.2, "c": Color(0.7, 0.95, 1.0, 0.9), "s": 2.0})
-	if t >= CUT_END: end_cut()
+	if st >= CUT_END: end_cut()
 func end_cut() -> void:
 	music.stop(); parts.clear(); start_game()
-func cut_lines(t: float) -> String:
-	var L := [[0, "PENTHOUSE SUITE, NEON CITY. 1985."], [2.6, "CHUMPLEE: BEST. PRIVATE. CONCERT. EVER!!"], [6.0, "KELDARAH: SORRY BOYS... THE PARTY'S OVER!"], [8.8, "KELDARAH: KEL-BALL, GO!!"], [11.0, "KELDARAH: TOODLES, CHUMPLEE! MWAHAHA!"], [12.6, "CHUMPLEE: NOT ON MY WATCH!!"], [14.5, "CHUMPLEE: AAAAAAAAAAAAAAAAAH!!!"], [19.4, ""], [20.8, "CHUMPLEE: ...NAILED IT."]]
-	var cur := [0, ""]
-	for l in L:
-		if t >= l[0]: cur = l
-	var n := int((t - cur[0]) * 30)
+const CONCERT_LINES := [[0.0, "PENTHOUSE SUITE, NEON CITY. 1985."], [4.5, "A PRIVATE WHAM! SHOW. AUDIENCE: ONE."], [9.5, "CHUMPLEE: BEST. PRIVATE. CONCERT. EVER!!"], [14.5, "GEORGE: HELLO NEON CITY! ER... CHUMPLEE!"], [19.5, "CHUMPLEE: WOOOO! I'M THE WHOLE CROWD!!"], [24.5, "ANDREW: THIS ONE'S FOR OUR #1 FAN!"], [29.0, "CHUMPLEE: I'M ALSO YOUR #2 THRU #500 FAN."], [34.0, "*A 9-MINUTE AIR GUITAR SOLO BEGINS*"], [40.0, "GEORGE: HE'S... ACTUALLY KINDA GOOD?"], [45.0, "CHUMPLEE: LIGHTERS UP! THIS IS A BALLAD!!"], [50.0, "ANDREW: ENCORE?! WE'VE DONE TWELVE!"], [55.0, "CHUMPLEE: ONE. MORE. SONG!!!"]]
+const ACTION_LINES := [[6.0, "KELDARAH: SORRY BOYS... THE PARTY'S OVER!"], [8.8, "KELDARAH: KEL-BALL, GO!!"], [11.0, "KELDARAH: TOODLES, CHUMPLEE! MWAHAHA!"], [12.6, "CHUMPLEE: NOT ON MY WATCH!!"], [14.5, "CHUMPLEE: AAAAAAAAAAAAAAAAAH!!!"], [19.4, ""], [20.8, "CHUMPLEE: ...NAILED IT."]]
+func cut_lines() -> String:
+	var cur := [0.0, ""]
+	if st < CONCERT:
+		for l in CONCERT_LINES:
+			if st >= l[0]: cur = l
+	else:
+		for l in ACTION_LINES:
+			var rt: float = CONCERT + (l[0] - 6.0) * SLOW
+			if st >= rt: cur = [rt, l[1]]
+	var n := int((st - cur[0]) * TYPE_CPS)
 	return cur[1].substr(0, n)
+func draw_concert_bg(t: float) -> void:
+	# extra light show: sweeping lasers + flashing floor
+	var ph := int(t / 5.0)
+	for k in 4:
+		var col: Color = [PAL.p, PAL.c, PAL.Y, PAL.G][(k + ph) % 4]
+		var a := sin(t * (1.2 + k * 0.3) + k) * 0.9
+		draw_line(Vector2(300, 13), Vector2(300, 13) + Vector2(sin(a), cos(a)) * 220, Color(col, 0.35), 1)
+	if t > 19.0:
+		for i in 12:
+			if hsh(i, int(t * 4)) < 40: draw_rect(Rect2(i * 32, 134, 32, 82), Color([PAL.p, PAL.c, PAL.Y][i % 3], 0.07))
+	if int(t * 6) % 2 == 0:
+		for k in 6: draw_rect(Rect2(300 + cos(t * 2 + k) * 70, 40 + sin(t * 3 + k * 2) * 30 + k * 10, 2, 2), PAL.w)
+func draw_concert_chump(cp: Vector2, t: float, bob: float) -> void:
+	var jump: float = abs(sin(t * 5)) * 8 if (t > 19.0 and t < 24.0) or t > 55.0 else 0.0
+	var p := cp + Vector2(0, -bob * 2 - jump)
+	spr("rock", p)
+	if t > 34.0 and t < 45.0:
+		# air guitar solo, kneeling shred
+		draw_rect(Rect2(p.x - 6, p.y - 20, 22, 5), Color(1, 1, 1, 0.35))
+		draw_line(p + Vector2(14, -18), p + Vector2(30, -28), Color(1, 1, 1, 0.35), 1)
+	else:
+		draw_rect(Rect2(p.x - 8, p.y - 20, 20, 6), Color(1, 1, 1, 0.3))  # invisible air guitar
+	if t > 45.0 and t < 55.0:
+		var hx := p + Vector2(-16, -44 + sin(t * 2) * 2)
+		draw_rect(Rect2(hx.x, hx.y, 3, 6), PAL.r); draw_circle(hx + Vector2(1.5, -2), 2, PAL.Y if int(t * 8) % 2 else Color("#ff8a20"))
+	if t > 19.0 and t < 29.0:
+		# homemade fan sign
+		draw_rect(Rect2(p.x + 14, p.y - 62, 50, 16), PAL.w); draw_rect(Rect2(p.x + 14, p.y - 62, 50, 16), PAL.r, false, 1)
+		draw_line(p + Vector2(20, -46), p + Vector2(14, -30), PAL.d)
+		txt("I<3WHAM", Vector2(p.x + 39, p.y - 51), PAL.r, 6, true)
+	var cheers := [[7.5, "WOO!"], [12.0, "YEAH!!"], [18.5, "ENCORE!"], [22.5, "WOOOO!"], [27.5, "I LOVE YOU!!"], [33.0, "SHRED!"], [39.5, "YES!!"], [44.0, "WOO!"], [49.0, "MORE!!"], [54.0, "ONE MORE!"], [57.5, "WOOOOO!"]]
+	for c in cheers:
+		if t >= c[0] and t < c[0] + 1.6: txt(c[1], p + Vector2(-6, -46 - (t - c[0]) * 10), [PAL.Y, PAL.p, PAL.c][int(t * 6) % 3], 8)
 
 # ---------------- drawing ----------------
 func txt(s: String, p: Vector2, col := Color.WHITE, size := 8, center := false) -> void:
@@ -602,14 +689,14 @@ func draw_title() -> void:
 	txt(CONTROLS, Vector2(W / 2, 199), Color(0.6, 0.95, 1, 0.85), 6, true)
 	txt("(C) 1985 LOMB ARCADE   CREDIT 1", Vector2(W / 2, 210), Color(1, 1, 1, 0.7), 6, true)
 
-func penthouse(t: float) -> void:
+func penthouse(t: float, conc := false) -> void:
 	draw_rect(Rect2(0, 0, W, H), Color("#0a0418"))
 	# big windows with city
 	draw_set_transform(Vector2(0, 0))
 	for wi in 3:
 		var wx := 20 + wi * 124
 		draw_rect(Rect2(wx, 14, 110, 118), Color("#140830"))
-		var broken := wi == 2 and t >= 6.0
+		var broken := wi == 2 and not conc
 		for i in 8:
 			var bx := wx + 4 + i * 14
 			var bh := 30 + hsh(i + wi * 9, 4) % 70
@@ -631,7 +718,7 @@ func penthouse(t: float) -> void:
 	draw_rect(Rect2(220, 150, 150, 10), Color("#4a2060"))
 	draw_rect(Rect2(220, 150, 150, 2), PAL.p)
 	# stage lights
-	if t < 6.0:
+	if conc:
 		for k in 3:
 			var lx := 240 + k * 50
 			var col: Color = [PAL.p, PAL.c, PAL.Y][(k + int(t * 2)) % 3]
@@ -642,16 +729,22 @@ func penthouse(t: float) -> void:
 	if int(t * 6) % 2 == 0: draw_rect(Rect2(298, 11, 2, 2), PAL.w)
 
 func draw_cut(sh: Vector2) -> void:
-	var t := st
+	var conc := st < CONCERT
+	var t := cut_t()
 	draw_set_transform(sh)
-	if t < 14.5:
-		penthouse(t)
+	if conc or t < 14.5:
+		penthouse(t, conc)
+		if conc: draw_concert_bg(t)
 		var bob := float(int(t * 6) % 2)
 		# Wham on stage
 		var g_pos := Vector2(270, 150 - bob)
 		var a_pos := Vector2(325, 150 - (1 - bob))
-		var captured_g := t >= 9.0
-		var captured_a := t >= 9.8
+		if conc:
+			var dn := int(t / 5.0) % 3
+			if dn == 1: g_pos += Vector2(sin(t * 3) * 8, -abs(sin(t * 6)) * 5); a_pos += Vector2(-sin(t * 3) * 8, -abs(sin(t * 6 + 1.5)) * 5)
+			elif dn == 2: g_pos.y -= abs(sin(t * 7)) * 7; a_pos.y -= abs(sin(t * 7)) * 7
+		var captured_g := not conc and t >= 9.0
+		var captured_a := not conc and t >= 9.8
 		if not captured_g or (t < 9.3 and int(t * 20) % 2 == 0):
 			spr("george", g_pos)
 			draw_line(g_pos + Vector2(10, -26), g_pos + Vector2(14, -6), PAL.g); draw_circle(g_pos + Vector2(10, -26), 2.5, PAL.d)
@@ -659,13 +752,13 @@ func draw_cut(sh: Vector2) -> void:
 			spr("andrew", a_pos, true)
 			draw_rect(Rect2(a_pos.x - 12, a_pos.y - 18, 18, 7), PAL.r)  # guitar
 			draw_line(a_pos + Vector2(-12, -15), a_pos + Vector2(-26, -24), PAL.m, 1)
-		if t < 6.0:
+		if conc:
 			for k in 4:
 				var np := Vector2(250 + k * 30 + sin(t * 2 + k) * 6, 120 - fmod(t * 20 + k * 15, 60))
 				txt("~" if k % 2 else "*", np, [PAL.p, PAL.c, PAL.Y, PAL.G][k], 8)
 		# Keldarah
 		var kp := Vector2(-100, -100)
-		if t >= 6.0 and t < 13.0:
+		if not conc and t >= 6.0 and t < 13.0:
 			var u: float = clamp((t - 6.0) / 0.5, 0, 1)
 			kp = Vector2(lerp(400.0, 300.0, u), lerp(60.0, 150.0, u))
 			if t > 11.2:
@@ -676,18 +769,16 @@ func draw_cut(sh: Vector2) -> void:
 		for k in 2:
 			var tt: float = [9.0, 9.8][k]
 			var target: Vector2 = [g_pos, a_pos][k] + Vector2(0, -4)
-			if t >= tt - 0.4 and t < 11.2:
+			if not conc and t >= tt - 0.4 and t < 11.2:
 				var u: float = clamp((t - (tt - 0.4)) / 0.4, 0, 1)
 				var p := Vector2(300, 135).lerp(target, u) + Vector2(0, -sin(u * PI) * 20)
 				if u >= 1: p = target + Vector2(0, -sin(t * 18) * 1.5)
 				draw_orb(p)
-			if t >= 11.2 and t < 12.0: draw_orb(kp + Vector2(-10 + k * 20, -50))
+			if not conc and t >= 11.2 and t < 12.0: draw_orb(kp + Vector2(-10 + k * 20, -50))
 		# Chumplee
 		var cp := Vector2(90, 150)
-		if t < 6.0:
-			spr("rock", cp + Vector2(0, -bob * 2))
-			draw_rect(Rect2(cp.x - 8, cp.y - 20 - bob * 2, 20, 6), Color(1, 1, 1, 0.3))  # invisible air guitar
-			if int(t * 4) % 4 == 0: txt("!", cp + Vector2(16, -40), PAL.Y)
+		if conc:
+			draw_concert_chump(cp, t, bob)
 		elif t < 12.6:
 			spr("ch0", cp, false)
 			if t > 6.3: txt("?!", cp + Vector2(-8, -42), PAL.r)
@@ -737,7 +828,7 @@ func draw_cut(sh: Vector2) -> void:
 			txt("CRASH!!", Vector2(W / 2, 80), PAL.Y if int(u * 10) % 2 == 0 else PAL.r, int(24 * sc / 8) * 8, true)
 	draw_set_transform(Vector2.ZERO)
 	for q in parts: draw_rect(Rect2(q.p.x + sh.x, q.p.y + sh.y, q.s, q.s), Color(q.c, min(1.0, q.l * 2)))
-	box(cut_lines(t))
+	box(cut_lines())
 	txt("ENTER: SKIP", Vector2(W - 72, 10), Color(1, 1, 1, 0.5), 6)
 
 func draw_play(sh: Vector2) -> void:
@@ -782,13 +873,32 @@ func draw_play(sh: Vector2) -> void:
 		if boss.st == "dash" and boss.t < 0.7: kp.x += sin(boss.t * 60) * 1.5
 		draw_kel(kp, pp.x < boss.p.x, m, sin(st * 9) * 3)
 		if bossdead_t > 4.5:
+			var bt := bossdead_t
 			var bob := float(int(st * 5) % 2)
-			spr("george", Vector2(ARENA + W / 2 - 14, GROUND - bob))
-			spr("andrew", Vector2(ARENA + W / 2 + 14, GROUND - (1 - bob)), true)
+			var dance := bt > 20.5 and bt < 33.0
+			var jy: float = abs(sin(st * 8)) * 8 if dance else 0.0
+			var jy2: float = abs(sin(st * 8 + 1.6)) * 8 if dance else 0.0
+			var gx := ARENA + W / 2 - 14 + (sin(st * 4) * 10 if dance else 0.0)
+			var ax := ARENA + W / 2 + 14 - (sin(st * 4) * 10 if dance else 0.0)
+			if dance:
+				for k in 3:
+					var lx := ARENA + 60 + k * 130
+					var col: Color = [PAL.p, PAL.c, PAL.Y][(k + int(st * 3)) % 3]
+					draw_colored_polygon(PackedVector2Array([Vector2(lx, 0), Vector2(lx + 4, 0), Vector2(lx + 30 + sin(st * 2 + k) * 40, GROUND), Vector2(lx - 26 + sin(st * 2 + k) * 40, GROUND)]), Color(col, 0.16))
+			spr("george", Vector2(gx, GROUND - bob - jy), dance and int(st * 2) % 2 == 0)
+			spr("andrew", Vector2(ax, GROUND - (1 - bob) - jy2), not (dance and int(st * 2) % 2 == 0))
+			if bt > 9.0 and bt < 20.0:
+				for k in 3:
+					var hp2 := Vector2(ARENA + W / 2 - 24 + k * 16, GROUND - 52 - fmod(st * 14 + k * 9, 24))
+					draw_circle(hp2 + Vector2(-2, 0), 2.5, PAL.r); draw_circle(hp2 + Vector2(2, 0), 2.5, PAL.r)
+					draw_colored_polygon(PackedVector2Array([hp2 + Vector2(-4.5, 1), hp2 + Vector2(4.5, 1), hp2 + Vector2(0, 6)]), PAL.r)
 		elif bossdead_t == 0 or bossdead_t < 4.5:
 			draw_orb(Vector2(ARENA + W / 2 - 14, GROUND - 6 - abs(sin(st * 3)) * 3)); draw_orb(Vector2(ARENA + W / 2 + 14, GROUND - 6 - abs(sin(st * 3 + 1)) * 3))
 	# player
-	if state == "play" and (inv <= 0 or int(st * 16) % 2 == 0):
+	if state == "play" and bossdead_t > 20.5 and bossdead_t < 33.0:
+		var bob2 := float(int(st * 6) % 2)
+		spr("rock", Vector2(pp.x, pp.y - bob2 * 3 - abs(sin(st * 8 + 0.8)) * 6), int(st * 2) % 2 == 1)
+	elif state == "play" and (inv <= 0 or int(st * 16) % 2 == 0):
 		var n := "chj" if not on_ground else ("ch%d" % (int(run_anim) % 3) if abs(pv.x) > 0 else "ch0")
 		var fl := facing < 0
 		spr(n, pp, fl)
